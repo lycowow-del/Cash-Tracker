@@ -59,7 +59,8 @@ function convertPlan(id){const p=S.plans.find(x=>x.id===id);if(!p||p.paid)return
 const unpaid=()=>S.plans.filter(p=>!p.paid),reserved=()=>unpaid().filter(p=>p.res&&isA(p.acct)).reduce((a,p)=>a+p.amt,0);
 /* views */
 const opts=(sel,onlyA)=>S.accts.filter(a=>!onlyA||isA(a.id)).map(a=>`<option value="${a.id}"${a.id===sel?' selected':''}>${esc(lab(a.id))}</option>`).join('');
-const catOpts=s=>S.cats.map(c=>`<option${c===s?' selected':''}>${esc(c)}</option>`).join('');
+const arch=()=>S.arch||(S.arch=[]),act=()=>S.cats.filter(c=>!arch().includes(c)),usedC=c=>S.tx.some(t=>t.cat===c)||S.plans.some(p=>p.cat===c);
+const catOpts=s=>{const l=S.cats.filter(c=>!arch().includes(c)||c===s);return(l.length?'':'<option value="">Uncategorized</option>')+l.map(c=>`<option${c===s?' selected':''}>${esc(c)}</option>`).join('')};
 const TL={income:'Income',expense:'Expense',transfer:'Transfer',refund:'Refund'};
 function txRow(x){const sg=x.type==='expense'?'-':x.type==='transfer'?'':'+';return`<div class="c ${x.void?'v':''}"><div class="r"><b>${esc(x.desc||TL[x.type])}</b><b class="${x.type==='expense'?'bad':x.type==='transfer'?'':'ok'}">${sg}${P(x.amt)}</b></div><div class="m">${fd(x.date)} · ${TL[x.type]}${x.cat?' · '+esc(x.cat):''} · ${x.from?esc(lab(x.from)):''}${x.from&&x.to?' → ':''}${x.to?esc(lab(x.to)):''}${x.plan?' · from plan':''}</div>${x.void?'':`<button class="s" onclick="editTx('${x.id}')">Edit</button> `}<button class="s" onclick="vt('${x.id}')">${x.void?'Restore':'Void'}</button></div>`}
 function vt(id){const t=S.tx.find(x=>x.id===id);t.void=!t.void;t.modified=Date.now();t.hist.push({at:Date.now(),act:t.void?'void':'restore'});save();render()}
@@ -81,13 +82,18 @@ ledger(){return`<h2>Transactions</h2>${S.tx.length?[...S.tx].sort((a,b)=>b.date.
 funds(){const nm=fnames(),ex=S.accts.filter(a=>!isA(a.id)).length;return`<h2>Funds</h2>${nm.map((n,i)=>{const ac=S.accts.filter(a=>a.fund===n);return`<div class="c" style="cursor:pointer" tabindex="0" onclick="openFund(${i})"><div class="r"><b>${esc(n)}</b><b>${P(ac.reduce((q,a)=>q+bal(a.id),0))}</b></div>${ac.length>1?ac.map(a=>`<div class="r m"><span>${esc(a.name)}</span><span>${P(bal(a.id))}</span></div>`).join(''):''}<div class="m">Tap to open</div></div>`}).join('')}
 <div class="c"><div class="r"><span>All funds total</span><b>${P(S.accts.reduce((a,x)=>a+bal(x.id),0))}</b></div></div>
 ${ex<4?`<div class="c"><b>Add fund</b> <span class="m">(${ex} of 4 extra funds used)</span><input id="nf" placeholder="Fund name"><input id="nfo" ${AM} placeholder="Opening balance ₱"><button onclick="addFund()">Add fund</button></div>`:'<div class="m">Maximum of five funds reached.</div>'}
-<div class="c"><b>Expense categories</b><div class="m">Renaming also updates past transactions and plans.</div>${S.cats.map((c,i)=>`<input value="${esc(c)}" onchange="renCat(${i},this.value)" aria-label="Category name">`).join('')}<input id="nc" placeholder="New category"><button onclick="addCat()">Add category</button></div>`},
+<button onclick="go('cats')">Manage expense categories</button>`},
 fund(){const n=fnames()[D.fi];if(n===undefined)return views.funds();const ac=S.accts.filter(a=>a.fund===n),ids=ac.map(a=>a.id);let i=0,o=0;for(const x of S.tx){if(x.void)continue;const ti=ids.includes(x.to),fi=ids.includes(x.from);if(ti&&!fi)i+=x.amt;if(fi&&!ti)o+=x.amt}
 const list=S.tx.filter(x=>ids.includes(x.from)||ids.includes(x.to)).sort((a,b)=>b.date.localeCompare(a.date)||b.created-a.created);
 return`<button class="s" onclick="go('funds')">← All funds</button><h2>${esc(n)}</h2><div class="c"><div class="m">Balance</div><div class="big">${P(ac.reduce((q,a)=>q+bal(a.id),0))}</div><div class="r"><span>Money in</span><b class="ok">${P(i)}</b></div><div class="r"><span>Money out</span><b class="bad">${P(o)}</b></div><div class="m">Moves between this fund’s own accounts are not counted.</div></div>
 ${ac.map(a=>`<div class="c"><div class="r"><b>${esc(a.name)}</b><b>${P(bal(a.id))}</b></div><label class="m">Opening balance ₱ (not income)</label><input ${AM} value="${fmt(a.open)}" onchange="setOpen('${a.id}',this.value)"></div>`).join('')}
 ${isA(ac[0].id)?'':`<div class="c"><label class="m">Fund name</label><input value="${esc(n)}" onchange="renFund(${D.fi},this.value)"><button class="s" onclick="delFund(${D.fi})">Delete fund (only if empty)</button></div>`}
 <h3>History</h3>${list.length?list.map(txRow).join(''):'<div class="c m">No transactions for this fund yet.</div>'}`},
+cats(){const a=arch();return`<button class="s" onclick="go('funds')">← Funds</button><h2>Expense categories</h2><div class="c"><div class="m">Rename, add or remove. Used categories are hidden (not deleted) so old reports stay correct.</div>
+${S.cats.map((c,i)=>a.includes(c)?'':`<div class="r"><input value="${esc(c)}" onchange="renCat(${i},this.value)" aria-label="Category name"><button class="s" style="margin:4px 0" onclick="remCat(${i})">Remove</button></div>`).join('')||'<div class="m">No categories. Add one below.</div>'}
+<input id="nc" placeholder="New category"><button onclick="addCat()">Add category</button></div>
+${S.cats.some(c=>!a.includes(c))?'<button class="s" style="width:100%" onclick="remAll()">Remove all unused categories</button>':''}
+${a.length?`<h3>Hidden</h3><div class="c">${S.cats.map((c,i)=>a.includes(c)?`<div class="r"><span>${esc(c)}</span><button class="s" onclick="resCat(${i})">Restore</button></div>`:'').join('')}</div>`:''}`},
 plan(){const s=S.set,al=alw(),res=reserved(),pu=unpaid().filter(p=>isA(p.acct)).reduce((a,p)=>a+p.amt,0);return`<h2>Next Cutoff Budget</h2>
 <div class="c"><b>Allowance receipt</b><div class="m">Expected and actual are kept separately.</div><label class="m">Expected date</label><input type="date" value="${s.expDate}" onchange="setS('expDate',this.value)"><label class="m">Expected amount ₱</label><input ${AM} value="${fv(s.expAmt)}" onchange="setS('expAmt',this.value,1)">
 <label class="m">Actual date received</label><input type="date" value="${s.actDate}" onchange="setS('actDate',this.value)"><label class="m">Actual amount ₱</label><input ${AM} value="${fv(s.actAmt)}" onchange="setS('actAmt',this.value,1)">
@@ -101,11 +107,11 @@ reports(){const c=period(today());R.f=R.f||c[0];R.t=R.t||c[1];return`<h2>Reports
 data(){return`<h2>Data</h2><div class="c"><button onclick="showJ()">Show full backup (JSON)</button><button onclick="showC()">Show ledger CSV</button><button onclick="tests()">Run accounting self-test</button>
 <textarea id="box" rows="9" placeholder="Output appears here. To restore, paste a backup JSON and tap Restore."></textarea><button onclick="restore()" id="rb">Restore from pasted JSON</button><div id="dm" class="w"></div></div><div class="m">Restore saves your current data under a separate IndexedDB key first.</div>`}};
 const NAV=[['home','Home'],['add','Add'],['ledger','Log'],['funds','Funds'],['plan','Plan'],['reports','Reports'],['data','Data']];
-function render(){$('#app').innerHTML=views[V]();$('#nav').innerHTML=NAV.map(n=>`<a class="${n[0]===(V==='fund'?'funds':V)?'on':''}" tabindex="0" onclick="go('${n[0]}')">${n[1]}</a>`).join('')}
+function render(){$('#app').innerHTML=views[V]();$('#nav').innerHTML=NAV.map(n=>`<a class="${n[0]===(V==='fund'||V==='cats'?'funds':V)?'on':''}" tabindex="0" onclick="go('${n[0]}')">${n[1]}</a>`).join('')}
 function go(v){V=v;render();scrollTo(0,0)}
 function snap(){for(const k of['type','amt','desc','cat','from','to','date','note']){const e=$('#f_'+k);if(e)D[k]=e.value}}
 function saveTx(){snap();const amt=toC(D.amt),t=D.type;if(amt<=0){D.warn='Enter an amount greater than 0.';return render()}
-const o={type:t,amt,desc:D.desc||'',date:D.date||today(),note:D.note||''};if(t==='expense'||t==='refund')o.cat=D.cat||S.cats[0];
+const o={type:t,amt,desc:D.desc||'',date:D.date||today(),note:D.note||''};if(t==='expense'||t==='refund')o.cat=D.cat||'';
 if(t==='expense'||t==='transfer')o.from=D.from||'cash';if(t!=='expense')o.to=D.to||'bank';if(t==='transfer'&&o.from===o.to){D.warn='Choose two different accounts.';return render()}
 const old=D.edit&&S.tx.find(x=>x.id===D.edit);
 if(o.from){let cur=bal(o.from);if(old&&!old.void){if(old.from===o.from)cur+=old.amt;if(old.to===o.from)cur-=old.amt}const key=amt+o.from;if(cur-amt<0&&D.conf!==key){D.conf=key;D.warn=`Insufficient balance: current ${P(cur)}, amount ${P(amt)}, result ${P(cur-amt)}. Tap Save anyway to record it.`;return render()}}
@@ -118,7 +124,10 @@ function delFund(i){const ids=S.accts.filter(a=>a.fund===fnames()[i]).map(a=>a.i
 function setOpen(id,v){A(id).open=toC(v);save();render()}
 function addFund(){const n=$('#nf').value.trim();if(!n||S.accts.some(a=>a.name.toLowerCase()===n.toLowerCase()))return alert('Enter a unique fund name.');S.accts.push({id:uid(),name:n,fund:n,open:toC($('#nfo').value)});save();render()}
 function renCat(i,v){v=v.trim();const o=S.cats[i];if(!v||S.cats.some((c,j)=>j!==i&&c.toLowerCase()===v.toLowerCase()))return render();S.cats[i]=v;S.tx.forEach(t=>{if(t.cat===o)t.cat=v});S.plans.forEach(p=>{if(p.cat===o)p.cat=v});save();render()}
-function addCat(){const v=$('#nc').value.trim();if(!v||S.cats.some(c=>c.toLowerCase()===v.toLowerCase()))return alert('Enter a unique category name.');S.cats.push(v);save();render()}
+function addCat(){const v=$('#nc').value.trim();if(!v)return alert('Enter a category name.');const i=S.cats.findIndex(c=>c.toLowerCase()===v.toLowerCase());if(i>=0){if(arch().includes(S.cats[i])){S.arch=arch().filter(c=>c!==S.cats[i]);save();return render()}return alert('That category already exists.')}S.cats.push(v);save();render()}
+function remCat(i){const c=S.cats[i];if(usedC(c)){if(!confirm('“'+c+'” has past transactions or plans. It will be hidden from the pickers but kept in old records. Continue?'))return;arch().push(c)}else if(!confirm('Delete “'+c+'”?'))return;else S.cats.splice(i,1);save();render()}
+function resCat(i){S.arch=arch().filter(c=>c!==S.cats[i]);save();render()}
+function remAll(){if(!confirm('Remove every category that has no past use, and hide the rest?'))return;const keep=[];S.cats.forEach(c=>{if(arch().includes(c))keep.push(c);else if(usedC(c)){arch().push(c);keep.push(c)}});S.cats=keep;save();render()}
 function crc(b){let c,t=crc.t;if(!t){t=crc.t=[];for(let n=0;n<256;n++){c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0}}c=-1;for(let i=0;i<b.length;i++)c=t[(c^b[i])&255]^(c>>>8);return(c^-1)>>>0}
 function zip(files){const E=new TextEncoder(),parts=[],cen=[],u16=n=>[n&255,n>>8&255],u32=n=>[n&255,n>>8&255,n>>16&255,n>>>24&255];let off=0,cs=0;
 for(const[name,txt]of files){const nb=E.encode(name),d=E.encode(txt),c=crc(d),lh=new Uint8Array([0x50,0x4b,3,4,...u16(20),...u16(0),...u16(0),...u16(0),...u16(0x21),...u32(c),...u32(d.length),...u32(d.length),...u16(nb.length),...u16(0)]);
