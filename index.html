@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="manifest" href="manifest.webmanifest"><meta name="theme-color" content="#0f6b4f"><link rel="icon" href="icon-192.png"><link rel="apple-touch-icon" href="icon-192.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><title>Budget Tracker</title>
+<style>
+:root{--bg:#f3f5f2;--fg:#17211b;--card:#fff;--mut:#66736b;--acc:#0f6b4f;--bad:#b3261e;--ok:#1b7a3d;--warn:#8a5a00;--ln:#dde3de;--pl:#6a4bb0;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:calc(58px + env(safe-area-inset-bottom,0px));}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#101613;--fg:#e8efe9;--card:#18201b;--mut:#93a29a;--acc:#4fc79a;--bad:#ff8a80;--ok:#7bd89a;--warn:#f0c060;--ln:#2a352e;--pl:#b79cf5}}
+:root[data-theme="dark"]{--bg:#101613;--fg:#e8efe9;--card:#18201b;--mut:#93a29a;--acc:#4fc79a;--bad:#ff8a80;--ok:#7bd89a;--warn:#f0c060;--ln:#2a352e;--pl:#b79cf5}
+*{box-sizing:border-box}html,body{margin:0}
+body{background:var(--bg);color:var(--fg);font:16px/1.45 "Segoe UI",system-ui,Roboto,sans-serif;max-width:640px;margin:auto;padding:0 12px 12px}
+h2{font:600 20px Georgia,serif;margin:14px 0 8px}h3{font-size:15px;margin:14px 0 6px}
+.c{background:var(--card);border:1px solid var(--ln);border-radius:10px;padding:12px;margin:8px 0}
+.big{font:600 32px Georgia,serif}.m{color:var(--mut);font-size:13px}.r{display:flex;justify-content:space-between;gap:8px;padding:3px 0}
+.g{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+input,select,button,textarea{font:inherit;width:100%;padding:10px;margin:4px 0;border-radius:8px;border:1px solid var(--ln);background:var(--card);color:var(--fg)}
+button{background:var(--acc);color:var(--bg);border:0;font-weight:600;cursor:pointer}button.s{background:transparent;color:var(--acc);border:1px solid var(--acc);padding:4px 8px;width:auto}
+nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--card);border-top:1px solid var(--ln);padding-bottom:env(safe-area-inset-bottom,0px);max-width:640px;margin:auto}
+nav a{flex:1;text-align:center;padding:10px 0;font-size:12px;color:var(--mut);cursor:pointer}nav a.on{color:var(--acc);font-weight:700;border-top:2px solid var(--acc)}
+.bad{color:var(--bad)}.ok{color:var(--ok)}.w{color:var(--warn);font-weight:600}.pl{color:var(--pl)}.v{opacity:.45;text-decoration:line-through}
+table{width:100%;border-collapse:collapse;font-size:14px}td,th{padding:4px;border-bottom:1px solid var(--ln);text-align:left}td:last-child,th:last-child{text-align:right}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+</style></head><body><div id="app"></div>
+<nav id="nav"></nav>
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const P=c=>(c<0?'-':'')+'₱'+(Math.abs(c)/100).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2});
+const toC=v=>Math.round(parseFloat(v)*100)||0;
+const ymd=(y,m,d)=>y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+const today=()=>{const d=new Date();return ymd(d.getFullYear(),d.getMonth()+1,d.getDate())};
+const fd=s=>s?new Date(s+'T00:00').toLocaleDateString('en-PH',{day:'numeric',month:'short',year:'numeric'}):'—';
+const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2);
+const dd=(a,b)=>Math.round((new Date(b+'T00:00')-new Date(a+'T00:00'))/864e5);
+function period(s){const[y,m]=s.split('-').map(Number);return +s.slice(8)<=15?[ymd(y,m,1),ymd(y,m,15)]:[ymd(y,m,16),ymd(y,m,new Date(y,m,0).getDate())]}
+function prevP(p){const[y,m,d]=p[0].split('-').map(Number);if(d===16)return[ymd(y,m,1),ymd(y,m,15)];const pm=m===1?12:m-1,py=m===1?y-1:y;return[ymd(py,pm,16),ymd(py,pm,new Date(py,pm,0).getDate())]}
+const mk=()=>({v:1,accts:[{id:'cash',name:'Cash on hand',fund:'Allowance',open:0},{id:'bank',name:'Cash in bank',fund:'Allowance',open:0}],
+cats:['Food and meals','Transportation','School','Groceries','Bills and utilities','Personal care','Entertainment','Shopping','Health and misc'],
+tx:[],plans:[],set:{expDate:'',expAmt:0,actDate:'',actAmt:0,minBal:0,buf:50000}});
+let S=mk(),V='home',D={type:'expense'},R={f:'',t:'',out:''},db;
+/* storage: IndexedDB */
+function openDB(){return new Promise(r=>{try{const q=indexedDB.open('bt',1);q.onupgradeneeded=()=>q.result.createObjectStore('kv');q.onsuccess=()=>{db=q.result;r()};q.onerror=()=>r()}catch(e){r()}})}
+function load(){return new Promise(r=>{if(!db)return r();try{const q=db.transaction('kv').objectStore('kv').get('s');q.onsuccess=()=>{if(q.result)S=q.result;r()};q.onerror=()=>r()}catch(e){r()}})}
+let NS=false;function save(k){if(NS)return;try{db&&db.transaction('kv','readwrite').objectStore('kv').put(JSON.parse(JSON.stringify(k?k.v:S)),k?k.key:'s')}catch(e){}}
+/* ledger core: integer centavos, balance always derived from ledger */
+const A=id=>S.accts.find(a=>a.id===id),isA=id=>id==='cash'||id==='bank';
+const lab=id=>{const a=A(id);return a?(a.fund===a.name?a.name:a.fund+' · '+a.name):'—'};
+function flow(id){let i=0,o=0;for(const t of S.tx)if(!t.void){if(t.to===id)i+=t.amt;if(t.from===id)o+=t.amt}return{i,o}}
+const bal=id=>{const f=flow(id);return A(id).open+f.i-f.o},alw=()=>bal('cash')+bal('bank');
+function addTx(o){const t={id:uid(),date:today(),desc:'',cat:'',note:'',created:Date.now(),modified:Date.now(),void:false,hist:[{at:Date.now(),act:'create'}],...o};S.tx.push(t);save();return t}
+const inR=(f,t)=>S.tx.filter(x=>!x.void&&x.date>=f&&x.date<=t);
+function spend(f,t,flt){let g=0,r=0;for(const x of inR(f,t)){if(flt&&!flt(x))continue;if(x.type==='expense')g+=x.amt;if(x.type==='refund')r+=x.amt}return{g,r,n:g-r}}
+const allow=x=>isA(x.from)||isA(x.to);
+function convertPlan(id){const p=S.plans.find(x=>x.id===id);if(!p||p.paid)return;const t=addTx({type:'expense',amt:p.amt,from:p.acct,cat:p.cat,desc:p.desc,plan:p.id});p.paid=true;p.tx=t.id;save();render()}
+const unpaid=()=>S.plans.filter(p=>!p.paid),reserved=()=>unpaid().filter(p=>p.res&&isA(p.acct)).reduce((a,p)=>a+p.amt,0);
+/* views */
+const opts=(sel,onlyA)=>S.accts.filter(a=>!onlyA||isA(a.id)).map(a=>`<option value="${a.id}"${a.id===sel?' selected':''}>${esc(lab(a.id))}</option>`).join('');
+const catOpts=s=>S.cats.map(c=>`<option${c===s?' selected':''}>${esc(c)}</option>`).join('');
+const TL={income:'Income',expense:'Expense',transfer:'Transfer',refund:'Refund'};
+function txRow(x){const sg=x.type==='expense'?'-':x.type==='transfer'?'':'+';return`<div class="c ${x.void?'v':''}"><div class="r"><b>${esc(x.desc||TL[x.type])}</b><b class="${x.type==='expense'?'bad':x.type==='transfer'?'':'ok'}">${sg}${P(x.amt)}</b></div><div class="m">${fd(x.date)} · ${TL[x.type]}${x.cat?' · '+esc(x.cat):''} · ${x.from?esc(lab(x.from)):''}${x.from&&x.to?' → ':''}${x.to?esc(lab(x.to)):''}${x.plan?' · from plan':''}</div><button class="s" onclick="vt('${x.id}')">${x.void?'Restore':'Void'}</button></div>`}
+function vt(id){const t=S.tx.find(x=>x.id===id);t.void=!t.void;t.modified=Date.now();t.hist.push({at:Date.now(),act:t.void?'void':'restore'});save();render()}
+const views={
+home(){const cp=period(today()),n=S.tx.length;return`<h2>Allowance</h2><div class="c"><div class="m">Total allowance (ledger)</div><div class="big">${P(alw())}</div>
+<div class="g"><div><div class="m">Cash on hand</div><b>${P(bal('cash'))}</b></div><div><div class="m">Cash in bank</div><b>${P(bal('bank'))}</b></div></div></div>
+<div class="g"><button onclick="D.type='expense';go('add')">+ Expense</button><button onclick="D.type='transfer';go('add')">Transfer</button></div>
+<div class="c"><div class="r"><span>Current cutoff</span><b>${fd(cp[0])} – ${fd(cp[1])}</b></div><div class="r"><span>Expected allowance</span><b>${P(S.set.expAmt)} on ${fd(S.set.expDate)}</b></div><div class="m">Expected money is not counted in your balance until you record receipt.</div></div>
+<div class="m">Works offline. Data lives only on this phone (IndexedDB). Use Data → backup regularly.</div>
+<h3>Recent</h3>${n?S.tx.slice(-5).reverse().map(txRow).join(''):'<div class="c m">No transactions yet. Set opening balances under Funds, then add your first entry.</div>'}`},
+add(){const t=D.type,e=t==='expense'||t==='refund';return`<h2>Add transaction</h2><div class="c"><select id="f_type" onchange="snap();render()">${Object.keys(TL).map(k=>`<option value="${k}"${k===t?' selected':''}>${TL[k]}</option>`).join('')}</select>
+<input id="f_amt" inputmode="decimal" placeholder="Amount ₱" value="${esc(D.amt||'')}"><input id="f_desc" placeholder="Description" value="${esc(D.desc||'')}">
+${e?`<select id="f_cat">${catOpts(D.cat)}</select>`:''}
+${t!=='income'&&t!=='refund'?`<label class="m">From</label><select id="f_from">${opts(D.from||'cash')}</select>`:''}
+${t!=='expense'?`<label class="m">${t==='transfer'?'To':'Into'}</label><select id="f_to">${opts(D.to||'bank')}</select>`:''}
+<input id="f_date" type="date" value="${D.date||today()}"><input id="f_note" placeholder="Note (optional)" value="${esc(D.note||'')}">
+<div class="w">${esc(D.warn||'')}</div><button onclick="saveTx()">${D.warn?'Save anyway':'Save'}</button></div>`},
+ledger(){return`<h2>Transactions</h2>${S.tx.length?[...S.tx].sort((a,b)=>b.date.localeCompare(a.date)||b.created-a.created).map(txRow).join(''):'<div class="c m">Nothing recorded yet.</div>'}`},
+funds(){const ex=S.accts.filter(a=>!isA(a.id)).length;return`<h2>Funds</h2>${S.accts.map(a=>{const f=flow(a.id);return`<div class="c"><div class="r"><b>${esc(lab(a.id))}</b><b>${P(bal(a.id))}</b></div><div class="m">In ${P(f.i)} · Out ${P(f.o)}</div><label class="m">Opening balance ₱ (not income)</label><input inputmode="decimal" value="${a.open/100}" onchange="setOpen('${a.id}',this.value)"></div>`}).join('')}
+${ex<4?`<div class="c"><b>Add fund</b> <span class="m">(${ex} of 4 extra funds used)</span><input id="nf" placeholder="Fund name"><input id="nfo" inputmode="decimal" placeholder="Opening balance ₱"><button onclick="addFund()">Add fund</button></div>`:'<div class="m">Maximum of five funds reached.</div>'}
+<div class="c"><b>Expense categories</b><div class="m">Renaming also updates past transactions and plans.</div>${S.cats.map((c,i)=>`<input value="${esc(c)}" onchange="renCat(${i},this.value)" aria-label="Category name">`).join('')}<input id="nc" placeholder="New category"><button onclick="addCat()">Add category</button></div>
+<div class="c"><div class="r"><span>All funds total</span><b>${P(S.accts.reduce((a,x)=>a+bal(x.id),0))}</b></div></div>`},
+plan(){const s=S.set,al=alw(),res=reserved(),pu=unpaid().filter(p=>isA(p.acct)).reduce((a,p)=>a+p.amt,0);return`<h2>Next Cutoff Budget</h2>
+<div class="c"><b>Allowance receipt</b><div class="m">Expected and actual are kept separately.</div><label class="m">Expected date</label><input type="date" value="${s.expDate}" onchange="setS('expDate',this.value)"><label class="m">Expected amount ₱</label><input inputmode="decimal" value="${s.expAmt/100||''}" onchange="setS('expAmt',this.value,1)">
+<label class="m">Actual date received</label><input type="date" value="${s.actDate}" onchange="setS('actDate',this.value)"><label class="m">Actual amount ₱</label><input inputmode="decimal" value="${s.actAmt/100||''}" onchange="setS('actAmt',this.value,1)">
+<div class="m">${s.expDate&&s.actDate?'Delay: '+dd(s.expDate,s.actDate)+' day(s)':''}</div><button onclick="recv()">Record received into bank</button></div>
+<div class="c"><b>Summary</b> <span class="m">(allowance funds)</span><div class="r"><span>Actual balance</span><b>${P(al)}</b></div><div class="r pl"><span>Reserved (earmark)</span><b>${P(res)}</b></div><div class="r"><span>Spendable (balance − reserved)</span><b>${P(al-res)}</b></div><div class="r pl"><span>Planned, unpaid</span><b>${P(pu)}</b></div><div class="r"><span>Projected ending (no new money)</span><b class="${al-pu<0?'bad':''}">${P(al-pu)}</b></div><div class="r"><span>Expected, not yet received</span><b>${P(s.expAmt)}</b></div><div class="m">Reserved money is part of planned expenses, so it is subtracted once in the projection.</div></div>
+<div class="c"><b>Planned expense</b><input id="p_d" placeholder="Description"><input id="p_a" inputmode="decimal" placeholder="Amount ₱"><input id="p_dt" type="date"><select id="p_c">${catOpts()}</select><select id="p_ac">${opts('cash')}</select><label><input type="checkbox" id="p_r" style="width:auto"> Reserve this amount</label><button onclick="addPlan()">Add plan</button></div>
+${S.plans.map(p=>`<div class="c ${p.paid?'v':''}"><div class="r"><b class="pl">${esc(p.desc)}</b><b>${P(p.amt)}</b></div><div class="m">${fd(p.date)} · ${esc(p.cat)} · ${esc(lab(p.acct))}${p.res?' · reserved':''}${p.paid?' · paid':''}</div>${p.paid?'':`<button class="s" onclick="convertPlan('${p.id}')">Mark paid → create expense</button> <button class="s" onclick="delPlan('${p.id}')">Remove</button>`}</div>`).join('')}
+<div class="c"><b>Thresholds</b><label class="m">Minimum balance ₱</label><input inputmode="decimal" value="${s.minBal/100||''}" onchange="setS('minBal',this.value,1)"><label class="m">Comfort buffer above minimum ₱</label><input inputmode="decimal" value="${s.buf/100}" onchange="setS('buf',this.value,1)"></div>`},
+reports(){const c=period(today());R.f=R.f||c[0];R.t=R.t||c[1];return`<h2>Reports</h2><div class="m">Nothing is generated until you tap a button.</div><div class="c"><div class="g"><input type="date" id="r_f" value="${R.f}"><input type="date" id="r_t" value="${R.t}"></div>
+<button onclick="rep()">Generate expense report</button><button onclick="fc()">Check allowance sufficiency</button></div>${R.out}`},
+data(){return`<h2>Data</h2><div class="c"><button onclick="showJ()">Show full backup (JSON)</button><button onclick="showC()">Show ledger CSV</button><button onclick="tests()">Run accounting self-test</button>
+<textarea id="box" rows="9" placeholder="Output appears here. To restore, paste a backup JSON and tap Restore."></textarea><button onclick="restore()" id="rb">Restore from pasted JSON</button><div id="dm" class="w"></div></div><div class="m">Restore saves your current data under a separate IndexedDB key first.</div>`}};
+const NAV=[['home','Home'],['add','Add'],['ledger','Log'],['funds','Funds'],['plan','Plan'],['reports','Reports'],['data','Data']];
+function render(){$('#app').innerHTML=views[V]();$('#nav').innerHTML=NAV.map(n=>`<a class="${n[0]===V?'on':''}" tabindex="0" onclick="go('${n[0]}')">${n[1]}</a>`).join('')}
+function go(v){V=v;render();scrollTo(0,0)}
+function snap(){for(const k of['type','amt','desc','cat','from','to','date','note']){const e=$('#f_'+k);if(e)D[k]=e.value}}
+function saveTx(){snap();const amt=toC(D.amt),t=D.type;if(amt<=0){D.warn='Enter an amount greater than 0.';return render()}
+const o={type:t,amt,desc:D.desc||'',date:D.date||today(),note:D.note||''};if(t==='expense'||t==='refund')o.cat=D.cat||S.cats[0];
+if(t==='expense'||t==='transfer')o.from=D.from||'cash';if(t!=='expense')o.to=D.to||'bank';if(t==='transfer'&&o.from===o.to){D.warn='Choose two different accounts.';return render()}
+if(o.from){const cur=bal(o.from),key=amt+o.from;if(cur-amt<0&&D.conf!==key){D.conf=key;D.warn=`Insufficient balance: current ${P(cur)}, amount ${P(amt)}, result ${P(cur-amt)}. Tap Save anyway to record it.`;return render()}}
+addTx(o);D={type:t};go('ledger')}
+function setOpen(id,v){A(id).open=toC(v);save();render()}
+function addFund(){const n=$('#nf').value.trim();if(!n||S.accts.some(a=>a.name.toLowerCase()===n.toLowerCase()))return alert('Enter a unique fund name.');S.accts.push({id:uid(),name:n,fund:n,open:toC($('#nfo').value)});save();render()}
+function renCat(i,v){v=v.trim();const o=S.cats[i];if(!v||S.cats.some((c,j)=>j!==i&&c.toLowerCase()===v.toLowerCase()))return render();S.cats[i]=v;S.tx.forEach(t=>{if(t.cat===o)t.cat=v});S.plans.forEach(p=>{if(p.cat===o)p.cat=v});save();render()}
+function addCat(){const v=$('#nc').value.trim();if(!v||S.cats.some(c=>c.toLowerCase()===v.toLowerCase()))return alert('Enter a unique category name.');S.cats.push(v);save();render()}
+function setS(k,v,m){S.set[k]=m?toC(v):v;save();render()}
+function recv(){const s=S.set;if(!s.actDate||s.actAmt<=0)return alert('Enter the actual date and amount first.');addTx({type:'income',amt:s.actAmt,to:'bank',date:s.actDate,desc:'Allowance received'});go('ledger')}
+function addPlan(){const a=toC($('#p_a').value);if(!$('#p_d').value||a<=0)return alert('Add a description and amount.');S.plans.push({id:uid(),desc:$('#p_d').value,amt:a,date:$('#p_dt').value,cat:$('#p_c').value,acct:$('#p_ac').value,res:$('#p_r').checked,paid:false});save();render()}
+function delPlan(id){S.plans=S.plans.filter(p=>p.id!==id);save();render()}
+function rep(){R.f=$('#r_f').value;R.t=$('#r_t').value;const x=inR(R.f,R.t),s=spend(R.f,R.t),days=dd(R.f,R.t)+1,bc={},ba={};
+for(const t of x){if(t.type==='expense'||t.type==='refund'){const k=t.cat||'—',v=t.type==='expense'?t.amt:-t.amt;bc[k]=(bc[k]||0)+v;const a=lab(t.from||t.to);ba[a]=(ba[a]||0)+v}}
+const tb=o=>Object.entries(o).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<tr><td>${esc(k)}</td><td>${P(v)}</td></tr>`).join('');
+R.out=`<div class="c"><b>${fd(R.f)} – ${fd(R.t)}</b><div class="r"><span>Gross expenses</span><b>${P(s.g)}</b></div><div class="r"><span>Refunds</span><b>${P(s.r)}</b></div><div class="r"><span>Net expenses</span><b>${P(s.n)}</b></div><div class="r"><span>Daily average (${days} days)</span><b>${P(Math.round(s.n/days))}</b></div><div class="m">Transfers are excluded. Opening balances are not income.</div>
+<h3>By category</h3><table>${tb(bc)||'<tr><td>No expenses in range</td><td></td></tr>'}</table><h3>By account</h3><table>${tb(ba)}</table></div>`;render()}
+function fc(){const td=today(),av=alw(),h=[];let p=prevP(period(td));
+for(let i=0;i<36&&h.length<3;i++){if(inR(p[0],p[1]).length)h.push({p,n:spend(p[0],p[1],allow).n,d:dd(p[0],p[1])+1});p=prevP(p)}
+const e=S.set.expDate,res=reserved();let o=`<div class="c"><b>Allowance sufficiency</b> <span class="m">(estimate, not a guarantee)</span><div class="r"><span>Available now (cash + bank)</span><b>${P(av)}</b></div><div class="r"><span>Reserved</span><b>${P(res)}</b></div><div class="r"><span>Expected, not received</span><b>${P(S.set.expAmt)} on ${fd(e)}</b></div>`;
+if(!h.length||!e){R.out=o+`<div class="w">${!e?'Set the expected receipt date in Plan. ':''}${!h.length?'No completed cutoff with recorded transactions yet, so daily spending can’t be estimated.':''}</div></div>`;return render()}
+const ds=h.reduce((a,x)=>a+x.d,0),avg=h.reduce((a,x)=>a+x.n,0)/ds,days=Math.max(0,dd(td,e)),pl=unpaid().filter(q=>isA(q.acct)&&(!q.date||q.date<=e)).reduce((a,q)=>a+q.amt,0),m=S.set.minBal,b=S.set.buf;
+o+=`<div class="r"><span>History used</span><span>${h.length} completed cutoff(s)${h.length<3?' (fewer than 3)':''}</span></div><div class="r"><span>Est. daily spending</span><b>${P(Math.round(avg))}</b></div><div class="r"><span>Days to receipt</span><b>${days}</b></div><div class="r"><span>Planned, unpaid, before receipt</span><b>${P(pl)}</b></div><div class="r"><span>Daily capacity above minimum</span><b>${P(days?Math.round((av-pl-m)/days):av-pl-m)}</b></div>
+<table><tr><th>Scenario</th><th>Projected balance</th></tr>${[['Lower spending (×0.8)',.8],['Expected (×1)',1],['Higher spending (×1.25)',1.25]].map(([n,f])=>{const pr=Math.round(av-pl-avg*days*f),L=pr>=m+b?['Comfortable','ok']:pr>=m?['Tight','w']:['Shortfall risk','bad'];return`<tr><td>${n}</td><td class="${L[1]}">${P(pr)} · ${L[0]}</td></tr>`}).join('')}</table>
+<div class="m">Projected = available − planned − est. daily × days. Comfortable ≥ minimum + buffer; Tight ≥ minimum; else Shortfall risk. Planned items may overlap with the average, so this leans cautious. Expected allowance is excluded.</div></div>`;R.out=o;render()}
+function showJ(){$('#box').value=JSON.stringify({format:'budget-tracker',version:1,exported:new Date().toISOString(),state:S},null,1)}
+function showC(){const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';$('#box').value=['id,date,type,from,to,category,description,amount_php,voided',...S.tx.map(t=>[t.id,t.date,t.type,t.from?lab(t.from):'',t.to?lab(t.to):'',t.cat,t.desc,(t.amt/100).toFixed(2),t.void].map(q).join(','))].join('\n')}
+let rc=0;function restore(){try{const j=JSON.parse($('#box').value);if(j.format!=='budget-tracker'||j.version!==1||!Array.isArray(j.state?.tx)||!Array.isArray(j.state?.accts))throw 0;if(!rc){rc=1;$('#dm').textContent=`Backup has ${j.state.tx.length} transactions. This replaces current data. Tap Restore again to confirm.`;return}save({key:'prev',v:S});S=j.state;save();rc=0;go('home')}catch(e){rc=0;$('#dm').textContent='Invalid or unsupported backup. Nothing was changed.'}}
+function tests(){const bak=S;NS=true;S=mk();const r=[],ok=(n,c)=>r.push((c?'✓ ':'✗ ')+n);
+addTx({type:'income',amt:500000,to:'bank'});addTx({type:'transfer',amt:150000,from:'bank',to:'cash'});const e=addTx({type:'expense',amt:12000,from:'cash',cat:'Food and meals'});
+ok('A: bank ₱3,500',bal('bank')===350000);ok('A: cash ₱1,380',bal('cash')===138000);ok('A: allowance ₱4,880',alw()===488000);
+const sp=spend('0000-01-01','9999-12-31');ok('A: expenses ₱120 (transfer excluded)',sp.g===12000);
+S.accts.push({id:'sv',name:'Savings',fund:'Savings',open:100000});const tot=()=>S.accts.reduce((a,x)=>a+bal(x.id),0),t0=tot();addTx({type:'transfer',amt:50000,from:'sv',to:'cash'});
+ok('B: savings −₱500',bal('sv')===50000);ok('B: total unchanged',tot()===t0);
+S.plans.push({id:'p',desc:'Fare',amt:30000,acct:'cash',cat:'Transportation',res:true,paid:false});const b0=alw();ok('C: plan leaves balance',alw()===b0&&reserved()===30000);
+convertPlan('p');convertPlan('p');ok('C: converted once (−₱300)',alw()===b0-30000&&reserved()===0);
+vt(e.id);ok('Void restores ₱120',alw()===b0-30000+12000);vt(e.id);ok('Restore re-applies',alw()===b0-30000);
+addTx({type:'refund',amt:12000,to:'cash'});ok('Refund nets expense',spend('0000-01-01','9999-12-31').n===30000);
+S=bak;NS=false;render();$('#box').value=r.join('\n')}
+openDB().then(load).then(render);
+if('serviceWorker'in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
+</script></body></html>
